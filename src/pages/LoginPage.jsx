@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('najath@sg.app');
-  const [password, setPassword] = useState('password');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signIn } = useAuth();
@@ -28,11 +28,7 @@ export default function LoginPage() {
     <div className="login-wrap">
       <div className="login-card">
         <div className="login-logo">
-          <div className="login-logo-icon">
-            <svg viewBox="0 0 14 14" style={{width:18,height:18,fill:'var(--accent)'}}>
-              <path d="M7 1L1 4v4c0 3 2.5 5 6 6 3.5-1 6-3 6-6V4L7 1z"/>
-            </svg>
-          </div>
+          <img src="/logo.png" alt="Sentinel Guard" style={{ width: 64, height: 64, objectFit: 'contain', flexShrink: 0 }} />
           <span className="login-logo-name">Sentinel Guard</span>
         </div>
         <div className="login-title">Sign in</div>
@@ -54,9 +50,6 @@ export default function LoginPage() {
           </button>
         </form>
         <div className="form-note">Role assigned automatically on authentication</div>
-        <div style={{marginTop:16, padding:12, background:'var(--bg3)', borderRadius:7, fontSize:11, fontFamily:'var(--mono)', color:'var(--text3)'}}>
-          Mock: admin = najath@sg.app | standard = ravindu@sg.app
-        </div>
       </div>
     </div>
   );

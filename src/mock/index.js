@@ -33,11 +33,11 @@ export const MOCK_HISTORY = Array.from({ length: 24 }, (_, i) => ({
 }));
 
 export const MOCK_ALERTS = [
-  { id: 'a1', time: '14:02:11', event: 'MiTM — payload intercepted, HMAC invalid',   node: 'node_01', severity: 'critical', mlResult: 'attack',   read: false },
-  { id: 'a2', time: '13:48:30', event: 'Replay attack — duplicate nonce detected',    node: 'node_01', severity: 'warning',  mlResult: 'anomaly',  read: false },
+  { id: 'a1', time: '14:02:11', event: 'MiTM - payload intercepted, HMAC invalid',   node: 'node_01', severity: 'critical', mlResult: 'attack',   read: false },
+  { id: 'a2', time: '13:48:30', event: 'Replay attack - duplicate nonce detected',    node: 'node_01', severity: 'warning',  mlResult: 'anomaly',  read: false },
   { id: 'a3', time: '13:21:07', event: 'ARP poisoning attempt flagged',               node: 'node_02', severity: 'warning',  mlResult: 'anomaly',  read: false },
-  { id: 'a4', time: '12:55:44', event: 'Normal traffic — sensor payload accepted',    node: 'node_01', severity: 'info',     mlResult: 'normal',   read: true  },
-  { id: 'a5', time: '12:33:19', event: 'False positive — ML reclassified',            node: 'node_02', severity: 'info',     mlResult: 'false_pos',read: true  },
+  { id: 'a4', time: '12:55:44', event: 'Normal traffic - sensor payload accepted',    node: 'node_01', severity: 'info',     mlResult: 'normal',   read: true  },
+  { id: 'a5', time: '12:33:19', event: 'False positive - ML reclassified',            node: 'node_02', severity: 'info',     mlResult: 'false_pos',read: true  },
   { id: 'a6', time: '11:50:02', event: 'Soil moisture above threshold',               node: 'node_02', severity: 'warning',  mlResult: 'anomaly',  read: true  },
   { id: 'a7', time: '11:12:44', event: 'Temperature spike detected',                  node: 'node_02', severity: 'critical', mlResult: 'anomaly',  read: true  },
   { id: 'a8', time: '10:45:11', event: 'HMAC key rotation completed',                 node: 'node_01', severity: 'info',     mlResult: 'normal',   read: true  },

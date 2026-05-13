@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getUsers, updateUserRole, isolateNode, blockIP, resetHMACKeys, forceReauth } from '../services';
+import { getUsers, updateUserRole, createUser, deleteUser, isolateNode, blockIP, resetHMACKeys, forceReauth } from '../services';
 import { useToast } from '../components/ui/Toast';
 import ConfirmModal from '../components/ui/Modal';
 
@@ -7,20 +7,35 @@ function RoleBadge({ role }) {
   return <span className={`badge ${role === 'admin' ? 'badge-admin' : 'badge-std'}`}>{role === 'admin' ? 'Admin' : 'Standard'}</span>;
 }
 
-const AVATAR_COLORS = { blue: '', green: ' green', amber: ' amber' };
+const AVATAR_COLORS = { blue: '', blue: ' blue', amber: ' amber' };
+
+const inputStyle = {
+  background: 'var(--bg3)',
+  border: '1px solid var(--border2)',
+  color: 'var(--text)',
+  borderRadius: 5,
+  padding: '6px 10px',
+  fontSize: 13,
+};
 
 export default function AdminPage() {
   const toast = useToast();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editingRole, setEditingRole] = useState(null); // { uid, name, currentRole }
-  const [mitigating, setMitigating] = useState(null);  // { action, label }
+  const [editingRole, setEditingRole] = useState(null);
+  const [mitigating, setMitigating] = useState(null);
   const [confirm, setConfirm] = useState(null);
+
+  // Add user form state
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newUser, setNewUser] = useState({ displayName: '', email: '', password: '', role: 'standard' });
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     getUsers().then(u => { setUsers(u); setLoading(false); });
   }, []);
 
+  // ── Role change ──────────────────────────────────────────────────────────────
   const handleRoleChange = async (uid, newRole) => {
     await updateUserRole(uid, newRole);
     setUsers(u => u.map(x => x.uid === uid ? { ...x, role: newRole } : x));
@@ -28,6 +43,48 @@ export default function AdminPage() {
     toast(`Role updated to ${newRole}`, 'success');
   };
 
+  // ── Delete user ──────────────────────────────────────────────────────────────
+  const handleDelete = (uid, name) => {
+    setConfirm({
+      title: `Delete ${name}?`,
+      message: 'This will permanently remove the user from the system. This cannot be undone.',
+      label: 'Delete user',
+      danger: true,
+      action: async () => {
+        setConfirm(null);
+        try {
+          await deleteUser(uid);
+          setUsers(u => u.filter(x => x.uid !== uid));
+          toast(`${name} deleted`, 'success');
+        } catch {
+          toast('Failed to delete user', 'error');
+        }
+      }
+    });
+  };
+
+  // ── Create user ──────────────────────────────────────────────────────────────
+  const handleCreateUser = async () => {
+    if (!newUser.displayName || !newUser.email || !newUser.password) {
+      toast('Please fill in all fields', 'warn');
+      return;
+    }
+    setCreating(true);
+    try {
+      await createUser(newUser.email, newUser.password, newUser.displayName, newUser.role);
+      toast('User created successfully', 'success');
+      setShowAddUser(false);
+      setNewUser({ displayName: '', email: '', password: '', role: 'standard' });
+      const updated = await getUsers();
+      setUsers(updated);
+    } catch {
+      toast('Failed to create user', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // ── Mitigation ───────────────────────────────────────────────────────────────
   const runMitigation = async (action, label, fn) => {
     setConfirm({
       title: `Confirm: ${label}`,
@@ -62,19 +119,68 @@ export default function AdminPage() {
         />
       )}
 
+      {/* ── Page header ── */}
       <div className="page-header">
         <div>
           <div className="page-title">User management</div>
           <div className="page-sub">Firebase Auth · RBAC roles · Admin access only</div>
         </div>
         <div className="hdr-btns">
-          <button className="btn primary" onClick={() => toast('Invite flow coming with Firebase Auth', 'warn')}>
-            + Invite user
+          <button className="btn primary" onClick={() => setShowAddUser(s => !s)}>
+            {showAddUser ? 'Cancel' : '+ Add user'}
           </button>
         </div>
       </div>
 
-      {/* Users table */}
+      {/* ── Add user form ── */}
+      {showAddUser && (
+        <div className="panel" style={{ marginBottom: 14, padding: 16 }}>
+          <div className="panel-title" style={{ marginBottom: 12 }}>New User</div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              placeholder="Full name"
+              value={newUser.displayName}
+              onChange={e => setNewUser({ ...newUser, displayName: e.target.value })}
+              style={inputStyle}
+            />
+            <input
+              placeholder="Email"
+              type="email"
+              value={newUser.email}
+              onChange={e => setNewUser({ ...newUser, email: e.target.value })}
+              style={inputStyle}
+            />
+            <input
+              placeholder="Password"
+              type="password"
+              value={newUser.password}
+              onChange={e => setNewUser({ ...newUser, password: e.target.value })}
+              style={inputStyle}
+            />
+            <select
+              value={newUser.role}
+              onChange={e => setNewUser({ ...newUser, role: e.target.value })}
+              style={inputStyle}
+            >
+              <option value="standard">Standard</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button
+              className="btn primary"
+              onClick={handleCreateUser}
+              disabled={creating}
+            >
+              {creating ? <span className="spinner" style={{ width: 12, height: 12 }} /> : null}
+              {creating ? ' Creating…' : 'Create'}
+            </button>
+            <button className="btn" onClick={() => setShowAddUser(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Users table ── */}
       <div className="panel" style={{ marginBottom: 14 }}>
         <div className="panel-hdr">
           <span className="panel-title">Users</span>
@@ -92,7 +198,7 @@ export default function AdminPage() {
                   <th>Email</th>
                   <th style={{ width: 100 }}>Role</th>
                   <th style={{ width: 90 }}>Last login</th>
-                  <th style={{ width: 130 }}>Actions</th>
+                  <th style={{ width: 160 }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -103,7 +209,7 @@ export default function AdminPage() {
                         {u.initials}
                       </div>
                     </td>
-                    <td className="td-name">{u.name}</td>
+                    <td className="td-name">{u.name ?? u.displayName}</td>
                     <td className="td-mono" style={{ color: 'var(--text)' }}>{u.email}</td>
                     <td>
                       {editingRole?.uid === u.uid ? (
@@ -125,7 +231,7 @@ export default function AdminPage() {
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="act-btn" onClick={() => setEditingRole(u)}>Edit role</button>
-                        <button className="act-btn danger" onClick={() => toast('Force logout coming with Firebase', 'warn')}>Logout</button>
+                        <button className="act-btn danger" onClick={() => handleDelete(u.uid, u.name ?? u.displayName)}>Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -136,51 +242,7 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* Mitigation controls */}
-      <div className="panel">
-        <div className="panel-hdr">
-          <span className="panel-title">Mitigation controls</span>
-          <span className="panel-meta" style={{ color: 'var(--red)' }}>Admin only · irreversible</span>
-        </div>
-        <div className="mit-btns">
-          {[
-            { action: 'isolate_01', label: 'Isolate Node 01', fn: () => isolateNode('node_01'), danger: true },
-            { action: 'isolate_02', label: 'Isolate Node 02', fn: () => isolateNode('node_02'), danger: true },
-            { action: 'block_ip',  label: 'Block suspected IP', fn: () => blockIP('192.168.1.99'), danger: true },
-            { action: 'hmac',      label: 'Reset HMAC keys', fn: resetHMACKeys, danger: false },
-            { action: 'reauth',    label: 'Force re-auth all users', fn: forceReauth, danger: false },
-          ].map(m => (
-            <button
-              key={m.action}
-              className={`btn${m.danger ? ' danger' : ''}${mitigating === m.action ? ' loading' : ''}`}
-              disabled={!!mitigating}
-              onClick={() => runMitigation(m.action, m.label, m.fn)}
-            >
-              {mitigating === m.action ? <span className="spinner" style={{ width: 12, height: 12 }} /> : null}
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Security overview */}
-        <div style={{ padding: '0 16px 16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px,1fr))', gap: 10, marginTop: 4 }}>
-          {[
-            { label: 'AES-128', status: 'Active', ok: true },
-            { label: 'HMAC-SHA256', status: 'Active', ok: true },
-            { label: 'MQTTs / TLS', status: 'Active', ok: true },
-            { label: 'HTTPS / TLS', status: 'Active', ok: true },
-            { label: 'Nonce protection', status: 'Active', ok: true },
-            { label: 'ML classifier', status: 'Running', ok: true },
-          ].map(s => (
-            <div key={s.label} style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>{s.label}</div>
-              <div style={{ fontSize: 12, color: s.ok ? 'var(--green)' : 'var(--red)', fontFamily: 'var(--mono)', fontWeight: 500 }}>
-                {s.ok ? '● ' : '○ '}{s.status}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      
     </>
   );
 }

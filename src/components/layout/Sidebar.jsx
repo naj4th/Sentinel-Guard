@@ -1,9 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
-const ShieldIcon = () => (
-  <svg viewBox="0 0 14 14"><path d="M7 1L1 4v4c0 3 2.5 5 6 6 3.5-1 6-3 6-6V4L7 1z"/></svg>
-);
 const GridIcon = () => (
   <svg viewBox="0 0 14 14" stroke="currentColor" fill="none" strokeWidth="1.5">
     <rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/>
@@ -31,6 +28,11 @@ const LogsIcon = () => (
     <line x1="1" y1="5" x2="13" y2="5"/><line x1="5" y1="5" x2="5" y2="13"/>
   </svg>
 );
+const SignOutIcon = () => (
+  <svg viewBox="0 0 14 14" stroke="currentColor" fill="none" strokeWidth="1.5">
+    <path d="M9 2h3v10H9M6 10l3-3-3-3M9 7H1"/>
+  </svg>
+);
 
 export default function Sidebar({ alertCount = 0 }) {
   const { user, signOut } = useAuth();
@@ -46,11 +48,15 @@ export default function Sidebar({ alertCount = 0 }) {
 
   return (
     <div className="sidebar">
+
+      {/* Brand — logo image + text */}
       <NavLink to="/dashboard" className="sb-logo">
-        <div className="sb-logo-icon"><ShieldIcon /></div>
-        Sentinel Guard
+        <img src="/logo.png" alt="Sentinel Guard" className="sb-logo-img" />
+        <span className="sb-logo-text">Sentinel Guard</span>
       </NavLink>
 
+      {/* Main nav */}
+      <div className="sb-section">Monitor</div>
       <NavLink to="/dashboard" className={({ isActive }) => `sb-link${isActive ? ' active' : ''}`}>
         <GridIcon /> Dashboard
       </NavLink>
@@ -62,25 +68,27 @@ export default function Sidebar({ alertCount = 0 }) {
         {alertCount > 0 && <div className="sb-dot" />}
       </NavLink>
 
+      {/* Admin nav */}
       {isAdmin ? (
         <>
-          <div className="sb-section">Admin only</div>
+          <div className="sb-section">Admin</div>
           <NavLink to="/admin" className={({ isActive }) => `sb-link${isActive ? ' active' : ''}`}>
             <UserIcon /> User management
           </NavLink>
           <NavLink to="/logs" className={({ isActive }) => `sb-link${isActive ? ' active' : ''}`}>
-            <LogsIcon /> Logs
+            <LogsIcon /> System logs
           </NavLink>
         </>
       ) : (
-        <div style={{ padding: '12px 16px 6px', fontSize: '10px', color: 'var(--text3)', borderTop: '1px solid var(--border)', marginTop: '8px', fontFamily: 'var(--mono)', letterSpacing: '.06em' }}>
-          Admin panel hidden by RBAC
+        <div className="sb-section" style={{ borderTop: '1px solid rgba(255,255,255,0.15)', marginTop: 10, paddingTop: 14 }}>
+          Admin panel hidden · RBAC
         </div>
       )}
 
+      {/* User footer — avatar with initials, name, role badge, sign out */}
       <div className="sb-user">
         <div className={avatarClass}>{user?.initials}</div>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="sb-user-name">{user?.name?.split(' ')[0]}</div>
           <div className="sb-user-role">
             <span className={`badge ${isAdmin ? 'badge-admin' : 'badge-std'}`}>
@@ -90,10 +98,17 @@ export default function Sidebar({ alertCount = 0 }) {
         </div>
         <button
           onClick={handleSignOut}
-          style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text3)', fontSize: '11px', cursor: 'pointer', padding: '4px' }}
           title="Sign out"
+          style={{
+            background: 'none', border: 'none',
+            color: 'rgba(255,255,255,0.4)', cursor: 'pointer',
+            padding: '4px', display: 'flex', alignItems: 'center',
+            transition: 'color 0.13s', flexShrink: 0,
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = '#fff'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.4)'}
         >
-          ↩
+          <SignOutIcon />
         </button>
       </div>
     </div>

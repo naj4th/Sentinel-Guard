@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
-import { subscribeSensors, subscribeAlerts, subscribeStats, getSensorHistory } from '../services';
+import {
+  subscribeSensors,
+  subscribeAlerts,
+  subscribeStats,
+  subscribeSystemLogs,
+  getSensorHistory,
+} from '../services';
 
 export function useSensors() {
   const [state, setState] = useState({ data: [], loading: true, error: null });
@@ -23,6 +29,15 @@ export function useStats() {
   const [state, setState] = useState({ data: null, loading: true, error: null });
   useEffect(() => {
     const unsub = subscribeStats(setState);
+    return unsub;
+  }, []);
+  return state;
+}
+
+export function useSystemLogs() {
+  const [state, setState] = useState({ data: [], loading: true, error: null });
+  useEffect(() => {
+    const unsub = subscribeSystemLogs(setState);
     return unsub;
   }, []);
   return state;

@@ -1,6 +1,8 @@
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useSensors, useAlerts, useStats, useSensorHistory } from '../hooks/useData';
+import { useSensors, useAlerts, useStats } from '../hooks/useData';
+import { exportDashboardCSV } from '../services';
 import MiniChart from '../components/charts/MiniChart';
 
 function StatCard({ label, val, sub, variant }) {
@@ -19,16 +21,60 @@ function AlertDot({ severity }) {
   return <div className="alert-dot dot-ok" />;
 }
 
+// Shows a value or "—" when the node is offline
+function SensorVal({ val, unit, online, loading }) {
+  if (loading)  return <span>…</span>;
+  if (!online)  return <span style={{ color: 'var(--text3)' }}>—</span>;
+  if (val == null) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  return <span>{val}{unit}</span>;
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { data: sensors, loading: sensorsLoading } = useSensors();
-  const { data: alerts, loading: alertsLoading } = useAlerts();
-  const { data: stats, loading: statsLoading } = useStats();
-  const { data: history } = useSensorHistory('node_01');
+
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [exporting, setExporting]   = useState(false);
+
+  const { data: sensors, loading: sensorsLoading, refresh: refreshSensors } = useSensors(refreshKey);
+  const { data: alerts,  loading: alertsLoading,  refresh: refreshAlerts  } = useAlerts(refreshKey);
+  const { data: stats,   loading: statsLoading                             } = useStats(refreshKey);
+
+  // Poll sensor history every 30 s so the chart stays fresh
+  const [history, setHistory] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const { getSensorHistory } = await import('../services');
+      const h = await getSensorHistory('node_01', 24);
+      if (!cancelled) setHistory(h);
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [refreshKey]);
+
+  const node1 = sensors?.[0];
 
   const recentAlerts = (alerts || []).slice(0, 3);
   const unread = (alerts || []).filter(a => !a.read).length;
+
+  const handleRefresh = useCallback(() => {
+    // Bump the key — hooks that accept it will re-subscribe / re-fetch
+    setRefreshKey(k => k + 1);
+    // Also call explicit refresh helpers if the hook exposes them
+    refreshSensors?.();
+    refreshAlerts?.();
+  }, [refreshSensors, refreshAlerts]);
+
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      await exportDashboardCSV(sensors, alerts);
+    } finally {
+      setExporting(false);
+    }
+  }, [sensors, alerts]);
 
   return (
     <>
@@ -44,8 +90,10 @@ export default function DashboardPage() {
           <div className="page-sub">Live system overview · updated every 5s</div>
         </div>
         <div className="hdr-btns">
-          <button className="btn">Export</button>
-          <button className="btn primary">↻ Refresh</button>
+          <button className="btn" onClick={handleExport} disabled={exporting}>
+            {exporting ? '…' : '↓ Export'}
+          </button>
+          <button className="btn primary" onClick={handleRefresh}>↻ Refresh</button>
         </div>
       </div>
 
@@ -56,11 +104,9 @@ export default function DashboardPage() {
       ) : (
         <div className="stats-grid">
           <StatCard label="System status"    val={stats?.systemOnline ? 'Online' : 'Offline'} sub="All sensors active"  variant={stats?.systemOnline ? 'ok' : 'danger'} />
-          <StatCard label="Active alerts"    val={stats?.activeAlerts}  sub={`${stats?.criticalAlerts} critical`}  variant="danger" />
-          <StatCard label="Payloads verified" val={stats?.payloadsVerified?.toLocaleString()} sub="Last 24h" />
-          <StatCard label="HMAC failures"    val={stats?.hmacFailures}  sub="Last hour"  variant="warn" />
-          <StatCard label="ML accuracy"      val={`${stats?.mlAccuracy}%`} sub="Classification" variant="ok" />
-          <StatCard label="Uptime"           val={stats?.uptime}        sub="30-day average" variant="ok" />
+          <StatCard label="Active alerts"    val={stats?.activeAlerts ?? '—'}  sub={`${stats?.criticalAlerts ?? 0} critical`}  variant="danger" />
+          <StatCard label="HMAC failures"    val={stats?.hmacFailures ?? 0}    sub="Last hour"  variant={stats?.hmacFailures > 0 ? 'warn' : 'ok'} />
+          <StatCard label="Uptime"           val={stats?.uptime ?? '—'}        sub="30-day average" variant="ok" />
         </div>
       )}
 
@@ -68,66 +114,39 @@ export default function DashboardPage() {
         {/* Temperature chart */}
         <div className="panel">
           <div className="panel-hdr">
-            <span className="panel-title">Temperature — Node 01</span>
-            <span className="live-dot">Live</span>
+            <span className="panel-title">Temperature - Node 01</span>
+            {node1?.online
+              ? <span className="live-dot">Live</span>
+              : <span className="panel-meta" style={{color:'var(--red)'}}>Offline</span>
+            }
           </div>
           <div className="chart-wrap">
             <MiniChart data={history} dataKey="node01_temp" />
           </div>
           <div className="chart-footer">
             <span>24h ago</span>
-            <strong>{sensorsLoading ? '…' : `${sensors?.[0]?.temp} °C`}</strong>
+            <strong>
+              <SensorVal val={node1?.temp} unit=" °C" online={node1?.online} loading={sensorsLoading} />
+            </strong>
           </div>
         </div>
         {/* Humidity chart */}
         <div className="panel">
           <div className="panel-hdr">
-            <span className="panel-title">Humidity — Node 01</span>
-            <span className="live-dot">Live</span>
+            <span className="panel-title">Humidity - Node 01</span>
+            {node1?.online
+              ? <span className="live-dot">Live</span>
+              : <span className="panel-meta" style={{color:'var(--red)'}}>Offline</span>
+            }
           </div>
           <div className="chart-wrap">
             <MiniChart data={history} dataKey="node01_humidity" />
           </div>
           <div className="chart-footer">
             <span>24h ago</span>
-            <strong>{sensorsLoading ? '…' : `${sensors?.[0]?.humidity} %`}</strong>
-          </div>
-        </div>
-      </div>
-
-      {/* Soil moisture */}
-      <div className="two-col" style={{marginBottom:16}}>
-        <div className="panel">
-          <div className="panel-hdr">
-            <span className="panel-title">Soil moisture — Node 01</span>
-            <span className="live-dot">Live</span>
-          </div>
-          <div className="chart-wrap">
-            <MiniChart data={history} dataKey="node01_soil" color="#22c55e" />
-          </div>
-          <div className="chart-footer">
-            <span>24h ago</span>
-            <strong style={{color:'var(--green)'}}>{sensorsLoading ? '…' : `${sensors?.[0]?.soil} %`}</strong>
-          </div>
-        </div>
-        <div className="panel">
-          <div className="panel-hdr">
-            <span className="panel-title">Node 02 — all sensors</span>
-            <span className="panel-meta" style={{color: sensors?.[1]?.tempStatus === 'warn' ? 'var(--amber)' : 'var(--text3)'}}>
-              {sensors?.[1]?.tempStatus === 'warn' ? '⚠ Above threshold' : 'Normal'}
-            </span>
-          </div>
-          <div style={{padding:'12px 16px',display:'flex',gap:16}}>
-            {[
-              { label:'Temp', val:`${sensors?.[1]?.temp}°C`, color: sensors?.[1]?.tempStatus === 'warn' ? 'var(--amber)' : 'var(--text)' },
-              { label:'Humidity', val:`${sensors?.[1]?.humidity}%`, color: sensors?.[1]?.humStatus === 'warn' ? 'var(--amber)' : 'var(--text)' },
-              { label:'Soil', val:`${sensors?.[1]?.soil}%`, color: sensors?.[1]?.soilStatus === 'warn' ? 'var(--amber)' : 'var(--text)' },
-            ].map(s => (
-              <div key={s.label} style={{flex:1,textAlign:'center'}}>
-                <div style={{fontSize:11,color:'var(--text3)',marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em'}}>{s.label}</div>
-                <div style={{fontSize:22,fontWeight:700,fontFamily:'var(--mono)',color:s.color}}>{sensorsLoading ? '…' : s.val}</div>
-              </div>
-            ))}
+            <strong>
+              <SensorVal val={node1?.humidity} unit=" %" online={node1?.online} loading={sensorsLoading} />
+            </strong>
           </div>
         </div>
       </div>
@@ -135,7 +154,9 @@ export default function DashboardPage() {
       {/* Recent alerts */}
       <div className="panel">
         <div className="panel-hdr">
-          <span className="panel-title">Recent alerts {unread > 0 && <span className="badge badge-crit" style={{marginLeft:6}}>{unread} unread</span>}</span>
+          <span className="panel-title">
+            Recent alerts {unread > 0 && <span className="badge badge-crit" style={{marginLeft:6}}>{unread} unread</span>}
+          </span>
           <Link to="/alerts" className="panel-link">View all →</Link>
         </div>
         {alertsLoading ? (

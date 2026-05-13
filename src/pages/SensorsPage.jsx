@@ -2,29 +2,21 @@ import { useState } from 'react';
 import { useSensors, useSensorHistory } from '../hooks/useData';
 import HistoryChart from '../components/charts/HistoryChart';
 
-const THRESHOLDS = { temp: 35, humidity: 75, soil: 70 };
+const THRESHOLDS = { temp: 35, humidity: 75};
 
 export default function SensorsPage() {
   const { data: sensors, loading } = useSensors();
   const [timeRange, setTimeRange] = useState(24);
-  const [activeNode, setActiveNode] = useState('node_01');
-  const { data: history, loading: histLoading } = useSensorHistory(activeNode, timeRange);
+  const { data: history, loading: histLoading } = useSensorHistory('node_01', timeRange);
 
   const node1 = sensors?.[0];
-  const node2 = sensors?.[1];
 
   const sensorCards = [
     { node: 'Node 01', key: 'node_01', label: 'Temperature', val: node1?.temp, unit: '°C', status: node1?.tempStatus, threshold: THRESHOLDS.temp },
     { node: 'Node 01', key: 'node_01', label: 'Humidity',    val: node1?.humidity, unit: '%', status: node1?.humStatus, threshold: THRESHOLDS.humidity },
-    { node: 'Node 01', key: 'node_01', label: 'Soil moisture',val: node1?.soil, unit: '%', status: node1?.soilStatus, threshold: THRESHOLDS.soil },
-    { node: 'Node 02', key: 'node_02', label: 'Temperature', val: node2?.temp, unit: '°C', status: node2?.tempStatus, threshold: THRESHOLDS.temp },
-    { node: 'Node 02', key: 'node_02', label: 'Humidity',    val: node2?.humidity, unit: '%', status: node2?.humStatus, threshold: THRESHOLDS.humidity },
-    { node: 'Node 02', key: 'node_02', label: 'Soil moisture',val: node2?.soil, unit: '%', status: node2?.soilStatus, threshold: THRESHOLDS.soil },
   ];
 
-  const histKeys = activeNode === 'node_01'
-    ? ['node01_temp', 'node01_humidity', 'node01_soil']
-    : ['node02_temp', 'node02_humidity', 'node02_soil'];
+  const histKeys = ['node01_temp', 'node01_humidity'];
 
   return (
     <>
@@ -66,10 +58,7 @@ export default function SensorsPage() {
       <div className="panel" style={{marginBottom:16}}>
         <div className="panel-hdr">
           <span className="panel-title">Historical data</span>
-          <div style={{display:'flex',gap:8}}>
-            <button className={`act-btn${activeNode==='node_01'?' active':''}`} onClick={()=>setActiveNode('node_01')} style={activeNode==='node_01'?{borderColor:'var(--accent)',color:'var(--accent)'}:{}}>Node 01</button>
-            <button className={`act-btn${activeNode==='node_02'?' active':''}`} onClick={()=>setActiveNode('node_02')} style={activeNode==='node_02'?{borderColor:'var(--accent)',color:'var(--accent)'}:{}}>Node 02</button>
-          </div>
+          <span className="panel-meta">Node 01</span>
         </div>
         <div className="chart-wrap">
           {histLoading ? (
@@ -91,16 +80,16 @@ export default function SensorsPage() {
           <table className="dt">
             <thead><tr><th>Node</th><th>IP Address</th><th>Last seen</th><th>Status</th><th>HMAC</th><th>Uptime</th></tr></thead>
             <tbody>
-              {[node1, node2].map((n, i) => n && (
-                <tr key={i}>
-                  <td className="td-name">Node 0{i+1}</td>
-                  <td className="td-mono">192.168.1.{10+i}</td>
+              {node1 && (
+                <tr>
+                  <td className="td-name">Node 01</td>
+                  <td className="td-mono">192.168.1.10</td>
                   <td className="td-mono">Just now</td>
-                  <td><span className={`badge ${n.online ? 'badge-ok' : 'badge-crit'}`}>{n.online ? 'Online' : 'Offline'}</span></td>
+                  <td><span className={`badge ${node1.online ? 'badge-ok' : 'badge-crit'}`}>{node1.online ? 'Online' : 'Offline'}</span></td>
                   <td><span className="badge badge-ok">Valid</span></td>
-                  <td className="td-mono">99.{94+i}%</td>
+                  <td className="td-mono">99.94%</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
