@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Sentinel Guard",
+    "slug": "sentinel-guard",
+    "version": "1.0.0",
+    "scheme": "sentinelguard",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": { "resizeMode": "contain", "backgroundColor": "#0a0c0f" },
+    "assetBundlePatterns": ["**/*"],
+    "ios": { "supportsTablet": false },
+    "android": { "adaptiveIcon": { "backgroundColor": "#0a0c0f" } },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": false }
+  }
+}
