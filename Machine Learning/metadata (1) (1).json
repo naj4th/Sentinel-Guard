@@ -1,0 +1,19 @@
+{
+  "model_name": "XGBoost",
+  "features": [
+    "temp",
+    "humidity",
+    "rolling_mean",
+    "rolling_std",
+    "temp_diff",
+    "hour",
+    "day_of_week",
+    "month",
+    "humidity_temp_ratio",
+    "sensor_encoded"
+  ],
+  "val_f1": 0.7919,
+  "val_roc_auc": 0.9964,
+  "test_f1": 0.7955,
+  "test_roc_auc": 0.9969
+}
