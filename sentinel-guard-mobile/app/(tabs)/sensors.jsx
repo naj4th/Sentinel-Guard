@@ -1,37 +1,145 @@
 import { ScrollView, View, Text, RefreshControl, TouchableOpacity } from 'react-native';
 import { useState } from 'react';
 import { useSensors, useSensorHistory } from '../../src/hooks/useData';
-import { Card, CardHeader, LiveDot, Badge, LoadingState, Button } from '../../src/components/UI';
+import { LiveDot, LoadingState } from '../../src/components/UI';
 import Sparkline from '../../src/components/Sparkline';
 import { colors, spacing, radius } from '../../src/theme';
 
-const THRESHOLDS = { temp: 35, humidity: 75, soil: 70 };
+const THRESHOLDS = { temp: 35, humidity: 75 };
 
-function SensorBlock({ label, value, unit, status, threshold, sparkData, color }) {
-  const isWarn = status === 'warn';
+const LABEL = {
+  fontSize: 9,
+  fontWeight: '700',
+  letterSpacing: 1.1,
+  textTransform: 'uppercase',
+  color: colors.text3,
+  fontFamily: colors.mono,
+};
+
+// section label
+function SectionLabel({ children, right }) {
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg3, borderWidth: 1, borderColor: isWarn ? colors.amberB : colors.border, borderRadius: radius.lg, padding: spacing.md, overflow: 'hidden' }}>
-      <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>{label}</Text>
-      <Text style={{ fontSize: 30, fontWeight: '700', color: isWarn ? colors.amber : color, fontFamily: colors.mono, letterSpacing: -0.5 }}>
-        {value}<Text style={{ fontSize: 14, color: colors.text2 }}>{unit}</Text>
-      </Text>
-      <Text style={{ fontSize: 10, color: isWarn ? colors.amber : colors.green, fontWeight: '600', marginTop: 4, marginBottom: 8 }}>
-        {isWarn ? `⚠ Above ${threshold}${unit}` : `✓ Normal`}
-      </Text>
-      <Sparkline data={sparkData} color={isWarn ? colors.amber : color} height={44} />
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+      paddingHorizontal: 2,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ width: 2, height: 10, backgroundColor: colors.accent, borderRadius: 1 }} />
+        <Text style={LABEL}>{children}</Text>
+      </View>
+      {right}
     </View>
   );
 }
 
+// individual sensor value block
+function SensorBlock({ label, value, unit, status, threshold, sparkData, color, online }) {
+  const isWarn = status === 'warn' && online;
+  const displayColor = isWarn ? colors.amber : color;
+  const showValue = online && value !== null && value !== undefined;
+
+  return (
+    <View style={{
+      flex: 1,
+      backgroundColor: colors.bg3,
+      borderWidth: 1,
+      borderColor: isWarn ? colors.amberB : colors.border2,
+      borderRadius: radius.md,
+      overflow: 'hidden',
+    }}>
+      {/* Colored top bar */}
+      <View style={{
+        height: 2,
+        backgroundColor: displayColor,
+        opacity: isWarn ? 0.9 : 0.5,
+      }} />
+
+      <View style={{ padding: spacing.sm + 2 }}>
+        <Text style={LABEL}>{label}</Text>
+
+        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 1, marginTop: 6 }}>
+          <Text style={{
+            fontSize: 28,
+            fontWeight: '700',
+            color: showValue ? displayColor : colors.text3,
+            fontFamily: colors.mono,
+            letterSpacing: -0.5,
+          }}>
+            {showValue ? value : '?'}
+          </Text>
+          {showValue && (
+            <Text style={{ fontSize: 13, color: colors.text3, fontWeight: '400', marginBottom: 2 }}>
+              {unit}
+            </Text>
+          )}
+        </View>
+
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          marginTop: 3,
+          marginBottom: 8,
+        }}>
+          <Text style={{
+            fontSize: 9,
+            fontWeight: '700',
+            color: !online ? colors.text3 : isWarn ? colors.amber : colors.green,
+            letterSpacing: 0.5,
+          }}>
+            {!online ? 'OFFLINE' : isWarn ? `▲ ${threshold}${unit} THRESH` : '✓ NORMAL'}
+          </Text>
+        </View>
+
+        {online && sparkData?.length > 0
+          ? <Sparkline data={sparkData} color={displayColor} height={40} />
+          : <View style={{ height: 40, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 9, color: colors.textDim }}>no data</Text>
+            </View>
+        }
+      </View>
+    </View>
+  );
+}
+
+// selector pill
+function SelectorPill({ label, active, onPress }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      style={{
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        borderRadius: radius.sm,
+        borderWidth: 1,
+        borderColor: active ? colors.accentB : colors.border,
+        backgroundColor: active ? colors.accentDim : colors.bg4,
+      }}
+    >
+      <Text style={{
+        fontSize: 11,
+        fontWeight: '600',
+        letterSpacing: 0.3,
+        color: active ? colors.accent : colors.text3,
+        fontFamily: colors.mono,
+      }}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// screen
 export default function SensorsScreen() {
   const { data: sensors, loading } = useSensors();
-  const [activeNode, setActiveNode] = useState('node_01');
-  const [hours, setHours] = useState(24);
+  const [hours, setHours]           = useState(24);
   const [refreshing, setRefreshing] = useState(false);
-  const { data: history, loading: histLoading } = useSensorHistory(activeNode, hours);
+  const { data: history, loading: histLoading } = useSensorHistory('node_01', hours);
 
   const node1 = sensors?.[0];
-  const node2 = sensors?.[1];
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -40,140 +148,198 @@ export default function SensorsScreen() {
   };
 
   const h = history || [];
-  const n1TempData = h.map(x => x.node01_temp);
-  const n1HumData  = h.map(x => x.node01_humidity);
-  const n1SoilData = h.map(x => x.node01_soil);
-  const n2TempData = h.map(x => x.node02_temp);
-  const n2HumData  = h.map(x => x.node02_humidity);
-  const n2SoilData = h.map(x => x.node02_soil);
+  const n1TempData = h.map(x => x.node01_temp).filter(v => v !== null);
+  const n1HumData  = h.map(x => x.node01_humidity).filter(v => v !== null);
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: spacing.md, paddingBottom: 32 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+      contentContainerStyle={{ paddingHorizontal: spacing.md, paddingTop: spacing.lg, paddingBottom: 40 }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+      }
     >
-      {/* Header */}
-      <View style={{ marginBottom: spacing.lg, paddingTop: 8 }}>
-        <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text, letterSpacing: -0.5 }}>Sensor data</Text>
-        <Text style={{ fontSize: 12, color: colors.text3, fontFamily: colors.mono, marginTop: 2 }}>
-          ESP32 · DHT22 · Soil moisture · onSnapshot
+      {/* header */}
+      <View style={{ marginBottom: spacing.lg }}>
+        <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 2, color: colors.text3, fontFamily: colors.mono }}>
+          SENTINEL GUARD
+        </Text>
+        <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text, letterSpacing: -0.3, marginTop: 2 }}>
+          Sensor data
+        </Text>
+        <Text style={{ fontSize: 10, color: colors.text3, fontFamily: colors.mono, marginTop: 3 }}>
+          ESP32 · DHT22 · MQTT · onSnapshot
         </Text>
       </View>
 
-      {/* Node 01 cards */}
-      <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, fontFamily: colors.mono }}>
-        Node 01 — Live readings
-      </Text>
+      {/* node 01 */}
+      <SectionLabel right={node1?.online ? <LiveDot /> : null}>
+        Node 01 - live readings
+      </SectionLabel>
 
-      {loading ? <LoadingState message="Loading sensor data…" /> : (
-        <>
-          <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm }}>
-            <SensorBlock label="Temperature" value={node1?.temp} unit="°C" status={node1?.tempStatus} threshold={THRESHOLDS.temp} sparkData={n1TempData} color={colors.red} />
-            <SensorBlock label="Humidity"    value={node1?.humidity} unit="%" status={node1?.humStatus} threshold={THRESHOLDS.humidity} sparkData={n1HumData} color={colors.blue} />
-          </View>
-          <View style={{ marginBottom: spacing.md }}>
-            <SensorBlock label="Soil moisture" value={node1?.soil} unit="%" status={node1?.soilStatus} threshold={THRESHOLDS.soil} sparkData={n1SoilData} color={colors.green} />
-          </View>
-
-          {/* Node 02 cards */}
-          <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, fontFamily: colors.mono }}>
-            Node 02 — Live readings
-          </Text>
-          <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm }}>
-            <SensorBlock label="Temperature" value={node2?.temp} unit="°C" status={node2?.tempStatus} threshold={THRESHOLDS.temp} sparkData={n2TempData} color={colors.red} />
-            <SensorBlock label="Humidity"    value={node2?.humidity} unit="%" status={node2?.humStatus} threshold={THRESHOLDS.humidity} sparkData={n2HumData} color={colors.blue} />
-          </View>
-          <View style={{ marginBottom: spacing.md }}>
-            <SensorBlock label="Soil moisture" value={node2?.soil} unit="%" status={node2?.soilStatus} threshold={THRESHOLDS.soil} sparkData={n2SoilData} color={colors.green} />
-          </View>
-        </>
+      {loading ? (
+        <LoadingState message="Loading sensor data..." />
+      ) : (
+        <View style={{ flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.lg }}>
+          <SensorBlock
+            label="Temperature"
+            value={node1?.temp}
+            unit="°C"
+            status={node1?.tempStatus}
+            threshold={THRESHOLDS.temp}
+            sparkData={n1TempData}
+            color={colors.red}
+            online={node1?.online}
+          />
+          <SensorBlock
+            label="Humidity"
+            value={node1?.humidity}
+            unit="%"
+            status={node1?.humStatus}
+            threshold={THRESHOLDS.humidity}
+            sparkData={n1HumData}
+            color={colors.blue}
+            online={node1?.online}
+          />
+        </View>
       )}
 
-      {/* Historical chart */}
-      <Card style={{ marginBottom: spacing.md }}>
-        <CardHeader
-          title="Historical readings"
-          right={<LiveDot />}
-        />
+      {/* historical chart */}
+      <SectionLabel>Historical readings</SectionLabel>
 
-        {/* Node selector */}
-        <View style={{ flexDirection: 'row', gap: 8, padding: spacing.md, paddingBottom: 0 }}>
-          {['node_01','node_02'].map(n => (
-            <TouchableOpacity key={n}
-              onPress={() => setActiveNode(n)}
-              style={{ paddingHorizontal: 12, paddingVertical: 5, borderRadius: 6, borderWidth: 1,
-                borderColor: activeNode === n ? colors.accentB : colors.border,
-                backgroundColor: activeNode === n ? colors.accentBg : colors.bg3 }}>
-              <Text style={{ fontSize: 12, fontWeight: '600', color: activeNode === n ? colors.accent : colors.text2 }}>
-                {n.replace('_','').toUpperCase().replace('NODE0','Node ')}
-              </Text>
-            </TouchableOpacity>
-          ))}
-          <View style={{ flex: 1 }} />
-          {[1, 6, 24].map(h => (
-            <TouchableOpacity key={h} onPress={() => setHours(h)}
-              style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1,
-                borderColor: hours === h ? colors.accentB : colors.border,
-                backgroundColor: hours === h ? colors.accentBg : colors.bg3 }}>
-              <Text style={{ fontSize: 11, fontWeight: '600', color: hours === h ? colors.accent : colors.text3 }}>{h}h</Text>
-            </TouchableOpacity>
+      <View style={{
+        backgroundColor: colors.bg3,
+        borderWidth: 1,
+        borderColor: colors.border2,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+        marginBottom: spacing.lg,
+      }}>
+        {/* Time range controls */}
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          padding: spacing.sm + 2,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
+          flexWrap: 'wrap',
+        }}>
+          <Text style={{ ...LABEL, flex: 1 }}>Node 01</Text>
+          {[1, 6, 24].map(hv => (
+            <SelectorPill key={hv} label={`${hv}H`} active={hours === hv} onPress={() => setHours(hv)} />
           ))}
         </View>
 
-        {histLoading ? <LoadingState message="Loading history…" /> : (
-          <View style={{ padding: spacing.md, gap: spacing.sm }}>
-            {activeNode === 'node_01' ? (
-              <>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.red, fontWeight: '600', marginBottom: 4 }}>Temperature</Text>
-                  <Sparkline data={n1TempData} color={colors.red} height={50} />
+        {histLoading ? (
+          <LoadingState message="Loading history..." />
+        ) : (
+          <View style={{ padding: spacing.md, gap: spacing.md }}>
+            {[
+              { label: 'Temperature', data: n1TempData, color: colors.red },
+              { label: 'Humidity',    data: n1HumData,  color: colors.blue },
+            ].map(s => (
+              <View key={s.label}>
+                <Text style={{ ...LABEL, marginBottom: 6 }}>{s.label}</Text>
+                <View style={{
+                  backgroundColor: colors.bg4,
+                  borderRadius: radius.sm,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  overflow: 'hidden',
+                }}>
+                  {s.data.length > 0
+                    ? <Sparkline data={s.data} color={s.color} height={56} />
+                    : <View style={{ height: 56, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 10, color: colors.textDim }}>no history data</Text>
+                      </View>
+                  }
                 </View>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.blue, fontWeight: '600', marginBottom: 4 }}>Humidity</Text>
-                  <Sparkline data={n1HumData} color={colors.blue} height={50} />
-                </View>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.green, fontWeight: '600', marginBottom: 4 }}>Soil moisture</Text>
-                  <Sparkline data={n1SoilData} color={colors.green} height={50} />
-                </View>
-              </>
-            ) : (
-              <>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.red, fontWeight: '600', marginBottom: 4 }}>Temperature</Text>
-                  <Sparkline data={n2TempData} color={colors.red} height={50} />
-                </View>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.blue, fontWeight: '600', marginBottom: 4 }}>Humidity</Text>
-                  <Sparkline data={n2HumData} color={colors.blue} height={50} />
-                </View>
-                <View>
-                  <Text style={{ fontSize: 10, color: colors.green, fontWeight: '600', marginBottom: 4 }}>Soil moisture</Text>
-                  <Sparkline data={n2SoilData} color={colors.green} height={50} />
-                </View>
-              </>
-            )}
+              </View>
+            ))}
           </View>
         )}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', padding: spacing.sm, paddingHorizontal: spacing.md, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <Text style={{ fontSize: 10, color: colors.text3, fontFamily: colors.mono }}>{hours}h ago</Text>
-          <Text style={{ fontSize: 10, color: colors.text3, fontFamily: colors.mono }}>Now</Text>
-        </View>
-      </Card>
+      </View>
 
-      {/* Node status table */}
-      <Card>
-        <CardHeader title="Node status" />
-        {[node1, node2].map((n, i) => n && (
-          <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: spacing.md, borderBottomWidth: i === 0 ? 1 : 0, borderBottomColor: colors.border, gap: 12 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: n.online ? colors.green : colors.red }} />
-            <Text style={{ fontWeight: '600', color: colors.text, flex: 1 }}>Node 0{i+1}</Text>
-            <Text style={{ fontSize: 11, color: colors.text3, fontFamily: colors.mono, flex: 1 }}>192.168.1.{10+i}</Text>
-            <Badge type={n.online ? 'ok' : 'critical'} label={n.online ? 'Online' : 'Offline'} />
+      {/* node status table */}
+      <SectionLabel>Node status</SectionLabel>
+
+      <View style={{
+        backgroundColor: colors.bg3,
+        borderWidth: 1,
+        borderColor: colors.border2,
+        borderRadius: radius.md,
+        overflow: 'hidden',
+      }}>
+        {/* Table header */}
+        <View style={{
+          flexDirection: 'row',
+          paddingHorizontal: spacing.md,
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
+          backgroundColor: colors.bg4,
+        }}>
+          {['Node', 'Address', 'Status'].map(h => (
+            <Text key={h} style={{ ...LABEL, flex: 1 }}>{h}</Text>
+          ))}
+        </View>
+
+        {/* Only Node 01 row - IP pulled from sensor doc if available, else show from node data */}
+        {node1 && (
+          <View style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: spacing.md,
+            paddingVertical: 12,
+          }}>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{
+                width: 6,
+                height: 6,
+                borderRadius: 1,
+                backgroundColor: node1.online ? colors.green : colors.red,
+              }} />
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text, fontFamily: colors.mono }}>
+                01
+              </Text>
+            </View>
+
+            <Text style={{ flex: 1, fontSize: 11, color: colors.text3, fontFamily: colors.mono }}>
+              {node1.ip ?? node1.ipAddress ?? '?'}
+            </Text>
+
+            <View style={{ flex: 1 }}>
+              <View style={{
+                alignSelf: 'flex-start',
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: radius.xs,
+                borderWidth: 1,
+                borderColor: node1.online ? colors.greenB : colors.redB,
+                backgroundColor: node1.online ? colors.greenBg : colors.redBg,
+              }}>
+                <Text style={{
+                  fontSize: 9,
+                  fontWeight: '700',
+                  letterSpacing: 0.6,
+                  color: node1.online ? colors.green : colors.red,
+                }}>
+                  {node1.online ? 'ONLINE' : 'OFFLINE'}
+                </Text>
+              </View>
+            </View>
           </View>
-        ))}
-      </Card>
+        )}
+
+        {!loading && !node1 && (
+          <View style={{ padding: 24, alignItems: 'center' }}>
+            <Text style={{ fontSize: 10, fontWeight: '700', color: colors.textDim, letterSpacing: 1 }}>
+              NO NODE DATA
+            </Text>
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
