@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ==========================================
+    // HELPER FUNCTIONS
+    // ==========================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Get user role from custom claims (JWT)
+    function getUserRole() {
+      return request.auth.token.role;
+    }
+    
+    // Check if user is Admin
+    function isAdmin() {
+      return isAuthenticated() && getUserRole() == 'admin';
+    }
+    
+    // Check if user is Standard User
+    function isStandard() {
+      return isAuthenticated() && getUserRole() == 'standard';
+    }
+    
+    // Check if user has specific permission
+    function hasPermission(permission) {
+      return isAuthenticated() && 
+        (isAdmin() || (request.auth.token.permissions != null && 
+        permission in request.auth.token.permissions));
+    }
+    
+    // Get user email for audit logging
+    function getUserEmail() {
+      return request.auth.token.email;
+    }
+    
+    // ==========================================
+    // SENSOR DATA COLLECTION
+    // ==========================================
+    match /sensor_data/{document} {
+      // All authenticated users can read sensor data
+      allow read: if isAuthenticated();
+      
+      // Only backend service account can write
+      allow write: if false;
+    }
+    
+    // ==========================================
+    // SECURITY EVENTS COLLECTION (Merged with Alerts)
+    // Contains security incidents and real-time alerts
+    // ==========================================
+    match /security_events/{document} {
+      // All authenticated users can read security events
+      allow read: if isAuthenticated();
+      
+      // Only Admin can create/modify security events
+      allow write: if isAdmin();
+      
+      // Validate required fields on create
+      allow create: if isAdmin() && 
+        request.resource.data.keys().hasAll(['eventType', 'severity', 'description', 'timestamp']);
+      
+      // Allow updating acknowledgment status (admins only)
+      allow update: if isAdmin() && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acknowledged', 'acknowledgedBy', 'acknowledgedAt']);
+    }
+    
+    // ==========================================
+    // USERS COLLECTION
+    // ==========================================
+    match /users/{userId} {
+      // Users can read their own profile, admins can read all
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Only admins can create/modify users
+      allow write: if isAdmin();
+      
+      // Users can update their own display name and phone only
+      allow update: if (request.auth.uid == userId) && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phoneNumber']);
+    }
+    
+    // ==========================================
+    // DEVICES COLLECTION
+    // ==========================================
+    match /devices/{deviceId} {
+      // All authenticated users can view device status
+      allow read: if isAuthenticated();
+      
+      // Only admins can create/update devices
+      allow write: if isAdmin();
+      
+      // Special rule: Admins can isolate devices (mitigation control)
+      allow update: if isAdmin() && 
+        request.resource.data.status == 'isolated' &&
+        request.resource.data.reason != null &&
+        request.resource.data.isolatedAt != null;
+    }
+    
+    // ==========================================
+    // DEVICE MITIGATION ACTIONS (Subcollection)
+    // ==========================================
+    match /devices/{deviceId}/mitigations/{mitigationId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+      
+      // Validate mitigation action types
+      allow create: if isAdmin() && 
+        request.resource.data.actionType in ['isolate', 'block_ip', 'reset_hmac', 'force_reauth'];
+    }
+    
+    // ==========================================
+    // BLOCKED IPS COLLECTION (Mitigation)
+    // ==========================================
+    match /blocked_ips/{ipAddress} {
+      // Only admins can view blocked IPs
+      allow read: if isAdmin();
+      
+      // Only admins can block/unblock IPs
+      allow write: if isAdmin();
+      
+      // Validate block data
+      allow create: if isAdmin() &&
+        request.resource.data.keys().hasAll(['ipAddress', 'reason', 'blockedAt', 'expiresAt']);
+    }
+    
+    // ==========================================
+    // HMAC KEYS COLLECTION (For device authentication)
+    // ==========================================
+    match /hmac_keys/{deviceId} {
+      // Only admins can view HMAC keys
+      allow read: if isAdmin();
+      
+      // Only admins can reset/create HMAC keys
+      allow write: if isAdmin();
+      
+      // Backend service can read for verification (special case)
+      allow read: if request.auth.token.admin == true;
+    }
+    
+    // ==========================================
+    // AUDIT LOGS COLLECTION
+    // ==========================================
+    match /audit_logs/{document} {
+      // Only admins can read audit logs
+      allow read: if isAdmin();
+      
+      // Only backend service can write audit logs
+      allow write: if false;
+    }
+    
+    // ==========================================
+    // BACKUP METADATA COLLECTION
+    // ==========================================
+    match /backup_metadata/{document} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // ==========================================
+    // SESSIONS COLLECTION (For force re-auth tracking)
+    // ==========================================
+    match /sessions/{sessionId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+  }
+}
