@@ -86,15 +86,6 @@ Both apps use an identical service layer pattern. When the backend is ready:
 
 ---
 
-## Mock data
-
-All mock data lives in `src/mock/index.js` in each project. You can edit it freely to test different states:
-
-- Change `MOCK_USER.role` to `'standard'` to preview the restricted view
-- Add alerts to `MOCK_ALERTS` to test the feed
-- Change sensor `status` to `'warn'` to test threshold warnings
-
----
 
 ## RBAC
 
@@ -129,5 +120,5 @@ Roles are enforced in two places:
 | Najath   | Frontend & Dashboard    |
 | Akila    | Backend & Firebase      |
 | Ravindu  | Security & Encryption   |
-| Julian   | IoT & Hardware          |
-| (ML member) | ML & Data Processing |
+| Methira  | IoT & Hardware          |
+| Julian   | ML & Data Processing    |
