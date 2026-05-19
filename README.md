@@ -1,4 +1,4 @@
-# Sentinel Guard — Frontend
+# Sentinel Guard - Frontend
 
 Secure Biodiversity IoT Monitoring System · CSG3101 Applied Project
 
@@ -13,7 +13,7 @@ sentinel-guard-mobile/    React Native mobile app (Expo + Expo Router)
 
 ---
 
-## Web app — quick start
+## Web app - quick start
 
 ```bash
 cd sentinel-guard-web
@@ -43,7 +43,7 @@ Standard users are redirected away from `/admin` and `/logs` by `<AdminRoute>`.
 
 ---
 
-## Mobile app — quick start
+## Mobile app - quick start
 
 ```bash
 cd sentinel-guard-mobile
@@ -112,12 +112,12 @@ Roles are enforced in two places:
 - Vite + React 18
 - React Router v6
 - Recharts (line + area charts)
-- CSS custom properties (no Tailwind — plain dark-theme design system in `index.css`)
+- CSS custom properties (no Tailwind - plain dark-theme design system in `index.css`)
 
 ### Mobile
 - Expo SDK 54
 - Expo Router v4 (file-based routing)
-- react-native-svg (sparkline charts — no heavy charting lib)
+- react-native-svg (sparkline charts - no heavy charting lib)
 - React Native core components only (no UI library)
 
 ---
