@@ -13,104 +13,61 @@ from paho.mqtt import client as mqtt
 import anomaly_detector
 
 
-# =========================
-# MQTT CONFIG
-# =========================
-BROKER_HOST = "Akila"
+BROKER_HOST = "172.20.10.14"
 BROKER_PORT = 8883
 TOPIC = "iot/sensor/dht22/secure"
 
+MQTT_USERNAME = "sentinelcredentials"
+MQTT_PASSWORD = "admin321"
+
 CA_CERT = r"C:\mosquitto\certs\ca.crt"
 
+FIREBASE_SERVICE_ACCOUNT = r"C:\Users\methd\Downloads\Sentinel Guard (2)\Sentinel Guard\serviceAccountKey.json"
 
-# =========================
-# FIREBASE CONFIG
-# =========================
-FIREBASE_SERVICE_ACCOUNT = r"C:\Users\ASUS\Downloads\Sentinel Guard (2)\Sentinel Guard\serviceAccountKey.json"
-
-SENSOR_COLLECTION   = "sensor_data"
+SENSOR_COLLECTION = "sensor_data"
 SECURITY_COLLECTION = "security_events"
 SYSTEM_LOG_COLLECTION = "system_logs"
 
+AES_KEY = b"12345678ABCDEFGH"
+AES_IV = b"HGFEDCBA87654321"
+HMAC_KEY = b"sentinel_guard_key"
 
-# =========================
-# CRYPTO CONFIG
-# =========================
-AES_KEY  = b"12345678ABCDEFGH"
-AES_IV   = b"HGFEDCBA87654321"
-HMAC_KEY = b"my_hmac_secret_2026"
-
-
-# =========================
-# DEVICE STATE
-# =========================
-DEVICE_ID        = "esp32_001"
-last_sequence_id = 0
-
-# Set to "Outdoor" if this ESP32 is placed outside.
-# Indoor  normal range: 22°C – 35°C
-# Outdoor normal range: 22°C – 38°C
+DEVICE_ID = "esp32_001"
 SENSOR_LABEL = "Indoor"
 
-# Tracks the last valid humidity received from the ESP32.
-# When the DHT22 fails to read (humidity_valid = False), the packet
-# arrives with humidity = None. Without this, the terminal shows
-# "INVALID" indefinitely and None gets stored in Firebase.
-# The anomaly_detector module maintains its own internal copy for
-# feature computation — this one is for display and Firebase records.
-_last_valid_humidity = None
+last_sequence_id = 0
+last_valid_humidity = None
+last_valid_temperature = None
 
-# Tracks the last valid temperature from the ESP32.
-# When the DHT22 fails at high heat (temperature_valid = False), temperature
-# arrives as None and Step 8 is skipped — so out_of_range never fires on the
-# way UP through the threshold. This lets us still check the bound using the
-# last known value and report the anomaly at the right time.
-_last_valid_temp = None
+HUMIDITY_SPIKE_THRESHOLD = 15
+HUMIDITY_INVALID_MIN_STREAK = 3
+HUMIDITY_ROLLING_WINDOW = 5
 
-HUMIDITY_SPIKE_THRESHOLD     = 15
-HUMIDITY_INVALID_MIN_STREAK  = 3
-HUMIDITY_ROLLING_WINDOW      = 5
-_humidity_valid_streak       = 0
-_humidity_rolling            = []
+humidity_valid_streak = 0
+humidity_window_values = []
 
+DDOS_THRESHOLD = 20
+DDOS_TIME_WINDOW = 5
+DDOS_COOLDOWN = 10
 
-# =========================
-# DDOS DETECTION CONFIG
-# =========================
-DDOS_THRESHOLD   = 20       # maximum packets allowed
-DDOS_TIME_WINDOW = 5        # seconds
-DDOS_COOLDOWN    = 10       # seconds to block traffic after detection
+packet_time_history = []
+ddos_block_until = 0
 
-message_times  = []
-ddos_block_until = 0        # each time until which incoming traffic is blocked 
+REPLAY_THRESHOLD = 5
+REPLAY_TIME_WINDOW = 10
+REPLAY_BLOCK_DURATION = 30
 
+replay_time_history = []
+replay_block_until = 0
 
-# =========================
-# REPLAY ATTACK MITIGATION CONFIG
-# =========================
-REPLAY_THRESHOLD      = 5   # max replay attempts before blocking
-REPLAY_TIME_WINDOW    = 10  # seconds to track replay attempts in
-REPLAY_BLOCK_DURATION = 30  # seconds to block device after threshold hit
-
-replay_attempt_times = []
-replay_block_until   = 0    # epoch time until which device is blocked
-
-
-# =========================
-# FDI RANGE GUARD CONFIG
-# Fast pre-ML check; catches physically impossible values before anomaly_detector runs
-# =========================
 FDI_MIN_TEMP = -45
 FDI_MAX_TEMP = 85
-FDI_MIN_HUM  = -5
-FDI_MAX_HUM  = 105
+FDI_MIN_HUM = -5
+FDI_MAX_HUM = 105
 
 
-# =========================
-# FIREBASE INIT
-# =========================
-cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT)
-firebase_admin.initialize_app(cred)
+firebase_key = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT)
+firebase_admin.initialize_app(firebase_key)
 db = firestore.client()
 
 
@@ -118,29 +75,30 @@ def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def upload_sensor_data(data):
+def upload_sensor_data(sensor_data):
     try:
-        db.collection(SENSOR_COLLECTION).add(data)
+        db.collection(SENSOR_COLLECTION).add(sensor_data)
         return True
-    except Exception as e:
-        print("Firebase sensor_data upload failed:", e)
+    except Exception as error:
+        print("Firebase sensor_data upload failed:", error)
         return False
 
 
 def upload_security_event(event_type, message, seq=None, raw=None):
     try:
-        event = {
-            "deviceId":     DEVICE_ID,
-            "eventType":    event_type,
-            "message":      message,
-            "sequence_id":  seq,
-            "timestamp":    now(),
+        security_record = {
+            "deviceId": DEVICE_ID,
+            "eventType": event_type,
+            "message": message,
+            "sequence_id": seq,
+            "timestamp": now(),
             "acknowledged": False,
         }
-        if raw:
-            event["raw_packet"] = raw
 
-        db.collection(SECURITY_COLLECTION).add(event)
+        if raw:
+            security_record["raw_packet"] = raw
+
+        db.collection(SECURITY_COLLECTION).add(security_record)
 
         print("----------------------------------------")
         print("SECURITY EVENT UPLOADED")
@@ -149,107 +107,100 @@ def upload_security_event(event_type, message, seq=None, raw=None):
         print(f"Sequence ID  : {seq}")
         print("----------------------------------------")
 
-    except Exception as e:
-        print("Firebase security_events upload failed:", e)
+    except Exception as error:
+        print("Firebase security_events upload failed:", error)
 
 
 def upload_system_log(level, message, details=None):
-    """
-    Writes a general operational log entry to system_logs.
-
-    level   : "info" | "warning" | "error"
-    message : short human-readable description
-    details : optional dict of extra fields
-    """
     try:
-        entry = {
-            "deviceId":  DEVICE_ID,
-            "level":     level,
-            "message":   message,
+        log_record = {
+            "deviceId": DEVICE_ID,
+            "level": level,
+            "message": message,
             "timestamp": now(),
         }
+
         if details:
-            entry.update(details)
-        db.collection(SYSTEM_LOG_COLLECTION).add(entry)
-    except Exception as e:
-        print(f"Firebase system_logs upload failed: {e}")
+            log_record.update(details)
+
+        db.collection(SYSTEM_LOG_COLLECTION).add(log_record)
+
+    except Exception as error:
+        print(f"Firebase system_logs upload failed: {error}")
 
 
 def upload_mitigation_event(action, reason, duration_seconds=None):
     try:
-        event = {
-            "deviceId":         DEVICE_ID,
-            "eventType":        "mitigation_applied",
+        mitigation_record = {
+            "deviceId": DEVICE_ID,
+            "eventType": "mitigation_applied",
             "mitigationAction": action,
-            "message":          reason,
+            "message": reason,
             "duration_seconds": duration_seconds,
-            "timestamp":        now(),
-            "acknowledged":     False,
+            "timestamp": now(),
+            "acknowledged": False,
         }
-        db.collection(SECURITY_COLLECTION).add(event)
+
+        db.collection(SECURITY_COLLECTION).add(mitigation_record)
 
         print("----------------------------------------")
         print("MITIGATION EVENT UPLOADED")
         print(f"Action       : {action}")
         print(f"Reason       : {reason}")
+
         if duration_seconds:
             print(f"Duration     : {duration_seconds} seconds")
+
         print("----------------------------------------")
 
-    except Exception as e:
-        print("Firebase mitigation upload failed:", e)
+    except Exception as error:
+        print("Firebase mitigation upload failed:", error)
 
 
+# Detects packet flooding using a time window
 def detect_ddos():
-    """
-    Tracks packet rate and enforces a cooldown block when the threshold is exceeded.
-
-    Returns:
-        ("detected" | "blocked" | "normal", packet_count)
-    """
-    global message_times, ddos_block_until
+    global packet_time_history, ddos_block_until
 
     current_time = time.time()
 
-    # If currently in cooldown block, reject without updating the window
     if current_time < ddos_block_until:
-        return "blocked", len(message_times)
+        return "blocked", len(packet_time_history)
 
-    message_times.append(current_time)
-    message_times = [t for t in message_times if current_time - t <= DDOS_TIME_WINDOW]
-    packet_count  = len(message_times)
+    packet_time_history.append(current_time)
 
-    if packet_count > DDOS_THRESHOLD:
+    packet_time_history = [
+        packet_time for packet_time in packet_time_history
+        if current_time - packet_time <= DDOS_TIME_WINDOW
+    ]
+
+    packet_count = len(packet_time_history)
+
+    if packet_count >= DDOS_THRESHOLD:
         ddos_block_until = current_time + DDOS_COOLDOWN
         return "detected", packet_count
 
     return "normal", packet_count
 
 
-def detect_and_mitigate_replay(seq):
-    """
-    Checks if the incoming sequence ID is a replay.
-    Tracks attempt rate and blocks the device if the threshold is exceeded.
-
-    Returns:
-        (is_replay: bool, block_active: bool, attempt_count: int, block_remaining: int)
-    """
-    global replay_attempt_times, replay_block_until
+# Detects repeated sequence IDs
+def detect_and_mitigate_replay(sequence_id):
+    global replay_time_history, replay_block_until
 
     current_time = time.time()
 
     if current_time < replay_block_until:
-        remaining = int(replay_block_until - current_time)
-        return True, True, None, remaining
+        remaining_time = int(replay_block_until - current_time)
+        return True, True, None, remaining_time
 
-    if seq <= last_sequence_id:
-        replay_attempt_times.append(current_time)
-        replay_attempt_times[:] = [
-            t for t in replay_attempt_times
-            if current_time - t <= REPLAY_TIME_WINDOW
+    if sequence_id <= last_sequence_id:
+        replay_time_history.append(current_time)
+
+        replay_time_history[:] = [
+            replay_time for replay_time in replay_time_history
+            if current_time - replay_time <= REPLAY_TIME_WINDOW
         ]
 
-        attempt_count = len(replay_attempt_times)
+        attempt_count = len(replay_time_history)
 
         if attempt_count >= REPLAY_THRESHOLD:
             replay_block_until = current_time + REPLAY_BLOCK_DURATION
@@ -260,50 +211,46 @@ def detect_and_mitigate_replay(seq):
     return False, False, 0, None
 
 
-def check_fdi_range(data):
-    """
-    Fast pre-ML range guard for physically impossible sensor values.
-    Runs before anomaly_detector to catch clear FDI attempts early.
-
-    Only checks values the ESP32 has marked as valid — invalid readings
-    (humidity_valid=False, temperature_valid=False) are skipped so that
-    normal DHT22 read failures don't get flagged as FDI and block the packet.
-
-    Returns:
-        (anomaly_detected: bool, reasons: list[str])
-    """
+# Checks impossible sensor values before ML detection
+def check_fdi_range(sensor_packet):
     anomaly_detected = False
     reasons = []
 
-    temp_valid = data.get("temperature_valid", False)
-    hum_valid  = data.get("humidity_valid",    False)
+    temperature_valid = sensor_packet.get("temperature_valid", False)
+    humidity_valid = sensor_packet.get("humidity_valid", False)
 
-    if temp_valid:
-        temperature = data.get("temperature")
-        if temperature is not None:
+    if temperature_valid:
+        temperature_value = sensor_packet.get("temperature")
+
+        if temperature_value is not None:
             try:
-                temperature = float(temperature)
-                if temperature < FDI_MIN_TEMP or temperature > FDI_MAX_TEMP:
+                temperature_value = float(temperature_value)
+
+                if temperature_value < FDI_MIN_TEMP or temperature_value > FDI_MAX_TEMP:
                     anomaly_detected = True
                     reasons.append(
-                        f"temperature {temperature}°C outside valid range "
+                        f"temperature {temperature_value}°C outside valid range "
                         f"[{FDI_MIN_TEMP}–{FDI_MAX_TEMP}°C]"
                     )
+
             except ValueError:
                 anomaly_detected = True
                 reasons.append("temperature is not numeric")
 
-    if hum_valid:
-        humidity = data.get("humidity")
-        if humidity is not None:
+    if humidity_valid:
+        humidity_value = sensor_packet.get("humidity")
+
+        if humidity_value is not None:
             try:
-                humidity = float(humidity)
-                if humidity < FDI_MIN_HUM or humidity > FDI_MAX_HUM:
+                humidity_value = float(humidity_value)
+
+                if humidity_value < FDI_MIN_HUM or humidity_value > FDI_MAX_HUM:
                     anomaly_detected = True
                     reasons.append(
-                        f"humidity {humidity}% outside valid range "
+                        f"humidity {humidity_value}% outside valid range "
                         f"[{FDI_MIN_HUM}–{FDI_MAX_HUM}%]"
                     )
+
             except ValueError:
                 anomaly_detected = True
                 reasons.append("humidity is not numeric")
@@ -312,57 +259,58 @@ def check_fdi_range(data):
 
 
 def resolve_display_humidity(raw_humidity, anomaly_result):
-    """
-    Returns the humidity value to show in the terminal and store in Firebase.
-
-    Priority:
-      1. Live reading from ESP32 (if valid)
-      2. The value the anomaly model actually used (last_known or fallback)
-      3. None only if the model did not run at all
-    """
     if raw_humidity is not None:
         return raw_humidity, "live"
+
     if anomaly_result and anomaly_result.get("humidity_used") is not None:
         return anomaly_result["humidity_used"], anomaly_result.get("humidity_source", "estimated")
+
     return None, "unavailable"
 
 
-def pkcs7_unpad(data):
-    pad_len = data[-1]
-    if pad_len < 1 or pad_len > 16:
+# Removes PKCS7 padding from decrypted AES data
+def pkcs7_unpad(decrypted_data):
+    padding_length = decrypted_data[-1]
+
+    if padding_length < 1 or padding_length > 16:
         raise ValueError("Invalid padding")
-    if data[-pad_len:] != bytes([pad_len]) * pad_len:
+
+    if decrypted_data[-padding_length:] != bytes([padding_length]) * padding_length:
         raise ValueError("Bad PKCS7 padding")
-    return data[:-pad_len]
+
+    return decrypted_data[:-padding_length]
 
 
-def decrypt_aes_base64(enc_b64):
-    encrypted = base64.b64decode(enc_b64)
-    cipher    = AES.new(AES_KEY, AES.MODE_CBC, AES_IV)
-    decrypted = cipher.decrypt(encrypted)
-    return pkcs7_unpad(decrypted).decode("utf-8")
+# Decrypts AES-CBC Base64 ciphertext
+def decrypt_aes_base64(encrypted_base64):
+    encrypted_data = base64.b64decode(encrypted_base64)
+    aes_cipher = AES.new(AES_KEY, AES.MODE_CBC, AES_IV)
+    decrypted_data = aes_cipher.decrypt(encrypted_data)
+
+    return pkcs7_unpad(decrypted_data).decode("utf-8")
 
 
-def compute_hmac_hex(data):
-    h = HMAC.new(HMAC_KEY, digestmod=SHA256)
-    h.update(data.encode("utf-8"))
-    return h.hexdigest()
+# Creates HMAC-SHA256 for integrity verification
+def compute_hmac_hex(data_text):
+    hmac_checker = HMAC.new(HMAC_KEY, digestmod=SHA256)
+    hmac_checker.update(data_text.encode("utf-8"))
+
+    return hmac_checker.hexdigest()
 
 
-def print_sensor_output(seq, temperature, raw_humidity, display_humidity,
+def print_sensor_output(sequence_id, temperature, raw_humidity, display_humidity,
                         humidity_source, temp_status, hum_status,
                         packet_status, timestamp, upload_success, anomaly_result):
     print("New Sensor Packet Received")
     print("----------------------------------------")
     print(f"Device ID          : {DEVICE_ID}")
-    print(f"Sequence ID        : {seq}")
+    print(f"Sequence ID        : {sequence_id}")
 
     if temperature is not None:
         print(f"Temperature        : {temperature} C")
     else:
         print("Temperature        : INVALID")
 
-    # Show resolved humidity — never blank after the first valid reading
     if display_humidity is not None:
         source_note = f"  [{humidity_source}]" if humidity_source != "live" else ""
         print(f"Humidity           : {display_humidity} %{source_note}")
@@ -380,6 +328,7 @@ def print_sensor_output(seq, temperature, raw_humidity, display_humidity,
         elif anomaly_result["anomaly_detected"] == 1:
             print(f"Anomaly Detection  : ANOMALY DETECTED")
             print(f"Confidence         : {anomaly_result['anomaly_proba'] * 100:.1f}%")
+
             if anomaly_result["out_of_range"]:
                 print(f"Reason             : Temperature out of normal range")
         else:
@@ -397,41 +346,39 @@ def print_sensor_output(seq, temperature, raw_humidity, display_humidity,
 def on_connect(client, userdata, flags, reason_code, properties=None):
     print("MQTT Receiver Started")
     print("Connected to broker:", reason_code)
+
     client.subscribe(TOPIC)
+
     print("Subscribed topic   :", TOPIC)
 
     model_ready = anomaly_detector.is_ready()
+
     if model_ready:
         print("Anomaly Model      : Loaded and ready")
     else:
         print("Anomaly Model      : NOT LOADED — check models/ folder")
 
     upload_system_log("info", "MQTT receiver started", {
-        "broker":      BROKER_HOST,
-        "port":        BROKER_PORT,
-        "topic":       TOPIC,
+        "broker": BROKER_HOST,
+        "port": BROKER_PORT,
+        "topic": TOPIC,
         "sensorLabel": SENSOR_LABEL,
-        "modelReady":  model_ready,
+        "modelReady": model_ready,
     })
+
     print("Waiting for ESP32 sensor packets...")
 
 
 def on_message(client, userdata, msg):
-    global last_sequence_id, _last_valid_humidity, _last_valid_temp
-    global _humidity_valid_streak, _humidity_rolling
+    global last_sequence_id, last_valid_humidity, last_valid_temperature
+    global humidity_valid_streak, humidity_window_values
     global ddos_block_until
 
-    # ── Decode and sanitise payload ────────────────────────────────────────
     raw_text = msg.payload.decode(errors="ignore").strip().strip("\x00")
 
-    # Empty payload — MQTT keep-alive / broker control / retained null.
-    # Nothing to parse, silently drop.
     if not raw_text:
         return
 
-    # ================================================================
-    # STEP 1 — DDOS DETECTION
-    # ================================================================
     ddos_status, packet_count = detect_ddos()
 
     if ddos_status == "detected":
@@ -442,6 +389,7 @@ def on_message(client, userdata, msg):
         print(f"Threshold        : {DDOS_THRESHOLD} packets")
         print(f"Mitigation       : Incoming packets ignored for {DDOS_COOLDOWN} seconds")
         print("----------------------------------------")
+
         upload_security_event(
             "ddos_attack",
             f"DDoS detected: {packet_count} packets within {DDOS_TIME_WINDOW}s. "
@@ -454,93 +402,113 @@ def on_message(client, userdata, msg):
         print("DDOS MITIGATION ACTIVE - Packet ignored")
         return
 
-    # ================================================================
-    # STEP 2 — UNENCRYPTED FDI DETECTOR
-    # Catches valid JSON with sensor fields but no crypto envelope.
-    # Must run before the outer JSON parse so it fires BEFORE KeyError.
-    # ================================================================
     try:
-        _probe = json.loads(raw_text)
-        if ("temperature" in _probe or "humidity" in _probe) and "ciphertext" not in _probe:
+        probe_packet = json.loads(raw_text)
+
+        if ("temperature" in probe_packet or "humidity" in probe_packet) and "ciphertext" not in probe_packet:
             upload_security_event(
                 "fdi_attack_unencrypted",
                 f"Unencrypted FDI attempt — raw sensor fields without encryption: "
-                f"temp={_probe.get('temperature')} hum={_probe.get('humidity')}",
+                f"temp={probe_packet.get('temperature')} hum={probe_packet.get('humidity')}",
                 raw=raw_text
             )
             return
+
     except json.JSONDecodeError:
-        pass  # not JSON — handled below
+        pass
 
-    # ================================================================
-    # STEP 3 — PARSE OUTER PACKET STRUCTURE
-    # Three separate except clauses so each failure type is handled
-    # correctly and never logged under the wrong event type.
-    # ================================================================
     try:
-        packet        = json.loads(raw_text)
-        seq           = packet["sequence_id"]
-        ciphertext    = packet["ciphertext"]
-        received_hmac = packet["hmac"]
+        outer_packet = json.loads(raw_text)
 
-    except json.JSONDecodeError as e:
-        # Not valid JSON at all — empty, binary, or garbage payload.
-        # Rate-aware: if this is part of a flood, log ddos_attack.
-        _rate = len(message_times)
-        if _rate >= DDOS_THRESHOLD:
+        sequence_id = outer_packet["sequence_id"]
+        ciphertext = outer_packet["ciphertext"]
+        received_hmac = outer_packet["hmac"]
+
+    except json.JSONDecodeError as error:
+        packet_rate = len(packet_time_history)
+
+        if packet_rate >= DDOS_THRESHOLD:
             ddos_block_until = time.time() + DDOS_COOLDOWN
+
             upload_security_event(
                 "ddos_attack",
                 f"DDoS flood with non-JSON packets: "
-                f"{_rate} packets in {DDOS_TIME_WINDOW}s. Cooldown {DDOS_COOLDOWN}s.",
+                f"{packet_rate} packets in {DDOS_TIME_WINDOW}s. Cooldown {DDOS_COOLDOWN}s.",
                 raw=raw_text
             )
-        elif _rate > 3:
-            pass   # rate rising — flood buildup, silently drop
+
+        elif packet_rate > 3:
+            pass
+
         else:
-            upload_security_event("malformed_packet", f"Bad structure: {e}", raw=raw_text)
+            upload_security_event("malformed_packet", f"Possible FDI Detected: {error}", raw=raw_text)
+
         return
 
     except KeyError:
-        # Valid JSON but missing crypto fields (sequence_id / ciphertext / hmac).
-        # This is a crafted packet — DDoS test tools, probing scripts, etc.
-        # Already counted in the DDoS window by detect_ddos() above.
-        # Silently drop — do NOT log as malformed_packet.
+        packet_rate = len(packet_time_history)
+
+        if packet_rate >= DDOS_THRESHOLD:
+            ddos_block_until = time.time() + DDOS_COOLDOWN
+
+            print("ALERT: DDOS ATTACK DETECTED (crafted JSON flood)")
+            print("----------------------------------------")
+            print(f"Packets Received : {packet_rate}")
+            print(f"Time Window      : {DDOS_TIME_WINDOW} seconds")
+            print(f"Threshold        : {DDOS_THRESHOLD} packets")
+            print(f"Mitigation       : Incoming packets ignored for {DDOS_COOLDOWN} seconds")
+            print("----------------------------------------")
+
+            upload_security_event(
+                "ddos_attack",
+                f"DDoS flood with crafted JSON packets (missing crypto fields): "
+                f"{packet_rate} packets in {DDOS_TIME_WINDOW}s. Cooldown {DDOS_COOLDOWN}s.",
+                raw=raw_text
+            )
+
+        elif packet_rate > 3:
+            pass
+
+        else:
+            upload_security_event(
+                "malformed_packet",
+                "Possible DDOS_Detected"
+                "(sequence_id / ciphertext / hmac).",
+                raw=raw_text
+            )
+
         return
 
-    # ================================================================
-    # STEP 4 — HMAC VERIFICATION
-    # ================================================================
     try:
         expected_hmac = compute_hmac_hex(ciphertext)
-        hmac_valid    = (expected_hmac == received_hmac)
-    except Exception as e:
-        upload_security_event("processing_error", f"HMAC computation error: {e}", seq, raw_text)
+        hmac_valid = expected_hmac == received_hmac
+
+    except Exception as error:
+        upload_security_event("processing_error", f"HMAC computation error: {error}", sequence_id, raw_text)
         return
 
     if not hmac_valid:
         print("ALERT: HMAC VERIFICATION FAILED")
         print("----------------------------------------")
-        print(f"Sequence ID : {seq}")
+        print(f"Sequence ID : {sequence_id}")
         print("Detection   : Forged / tampered packet")
         print("Mitigation  : Packet rejected before decryption")
         print("----------------------------------------")
+
         upload_security_event(
             "integrity_violation",
             "HMAC verification failed. Packet rejected before decryption.",
-            seq, raw_text
+            sequence_id,
+            raw_text
         )
         return
 
-    # ================================================================
-    # STEP 5 — REPLAY DETECTION
-    # ================================================================
-    is_replay, block_active, attempt_count, block_remaining = detect_and_mitigate_replay(seq)
+    is_replay, block_active, attempt_count, block_remaining = detect_and_mitigate_replay(sequence_id)
 
     if block_active:
         print("ALERT: PACKET DROPPED — Device blocked due to replay mitigation")
         print("----------------------------------------")
-        print(f"Sequence ID     : {seq}")
+        print(f"Sequence ID     : {sequence_id}")
         print(f"Block Remaining : {block_remaining} seconds")
         print("----------------------------------------")
         return
@@ -548,168 +516,172 @@ def on_message(client, userdata, msg):
     if is_replay:
         print("ALERT: REPLAY ATTACK DETECTED")
         print("----------------------------------------")
-        print(f"Received Sequence ID : {seq}")
+        print(f"Received Sequence ID : {sequence_id}")
         print(f"Last Accepted ID     : {last_sequence_id}")
         print(f"Attempt Count        : {attempt_count}/{REPLAY_THRESHOLD} in {REPLAY_TIME_WINDOW}s window")
         print("Mitigation           : Packet rejected")
         print("----------------------------------------")
+
         if attempt_count >= REPLAY_THRESHOLD:
             print(f"MITIGATION: Replay threshold exceeded — device blocked for {REPLAY_BLOCK_DURATION}s")
+
             upload_security_event(
                 "replay_attack",
-                f"Replay detected. Seq {seq}, last accepted {last_sequence_id}. "
+                f"Replay detected. Seq {sequence_id}, last accepted {last_sequence_id}. "
                 f"Attempt {attempt_count}/{REPLAY_THRESHOLD}.",
-                seq, raw_text
+                sequence_id,
+                raw_text
             )
+
             upload_mitigation_event(
                 "temporary_block",
                 f"Device blocked after {attempt_count} replay attempts in {REPLAY_TIME_WINDOW}s",
                 duration_seconds=REPLAY_BLOCK_DURATION
             )
+
         else:
             upload_security_event(
                 "replay_attack",
-                f"Replay detected. Seq {seq}, last accepted {last_sequence_id}. "
+                f"Replay detected. Seq {sequence_id}, last accepted {last_sequence_id}. "
                 f"Attempt {attempt_count}/{REPLAY_THRESHOLD}.",
-                seq, raw_text
+                sequence_id,
+                raw_text
             )
+
         return
 
-    # ================================================================
-    # STEP 6 — AES DECRYPTION
-    # ================================================================
     try:
-        plain     = decrypt_aes_base64(ciphertext)
-        data      = json.loads(plain)
-        inner_seq = data.get("sequence_id")
-    except Exception as e:
-        print(f"ALERT: DECRYPTION FAILED — {e}")
-        upload_security_event("decryption_error", f"AES decryption failed: {e}", seq, raw_text)
+        plain_text = decrypt_aes_base64(ciphertext)
+        inner_packet = json.loads(plain_text)
+        inner_sequence_id = inner_packet.get("sequence_id")
+
+    except Exception as error:
+        print(f"ALERT: DECRYPTION FAILED — {error}")
+        upload_security_event("decryption_error", f"AES decryption failed: {error}", sequence_id, raw_text)
         return
 
-    # ================================================================
-    # STEP 7 — SEQUENCE ID MISMATCH
-    # ================================================================
-    if inner_seq != seq:
+    if inner_sequence_id != sequence_id:
         print("ALERT: SEQUENCE ID MISMATCH")
         print("----------------------------------------")
-        print(f"Outer Sequence ID : {seq}")
-        print(f"Inner Sequence ID : {inner_seq}")
+        print(f"Outer Sequence ID : {sequence_id}")
+        print(f"Inner Sequence ID : {inner_sequence_id}")
         print("----------------------------------------")
+
         upload_security_event(
             "sequence_mismatch",
-            f"Outer seq {seq} does not match inner seq {inner_seq}. Packet rejected.",
-            seq, raw_text
+            f"Outer seq {sequence_id} does not match inner seq {inner_sequence_id}. Packet rejected.",
+            sequence_id,
+            raw_text
         )
         return
 
-    # ================================================================
-    # STEP 8 — FDI RANGE GUARD (pre-ML)
-    # ================================================================
     try:
-        fdi_detected, fdi_reasons = check_fdi_range(data)
-    except Exception as e:
-        upload_security_event("fdi_check_error", f"FDI range check error: {e}", seq, raw_text)
+        fdi_detected, fdi_reasons = check_fdi_range(inner_packet)
+
+    except Exception as error:
+        upload_security_event("fdi_check_error", f"FDI range check error: {error}", sequence_id, raw_text)
         return
 
     if fdi_detected:
         print("ALERT: FDI / RANGE VIOLATION DETECTED")
         print("----------------------------------------")
-        print(f"Sequence ID : {seq}")
-        print(f"Temperature : {data.get('temperature')}")
-        print(f"Humidity    : {data.get('humidity')}")
+        print(f"Sequence ID : {sequence_id}")
+        print(f"Temperature : {inner_packet.get('temperature')}")
+        print(f"Humidity    : {inner_packet.get('humidity')}")
         print(f"Reason      : {', '.join(fdi_reasons)}")
         print("Mitigation  : Packet rejected")
         print("----------------------------------------")
+
         upload_security_event(
             "fdi_attack",
             f"False Data Injection: {', '.join(fdi_reasons)}",
-            seq, raw_text
+            sequence_id,
+            raw_text
         )
         return
 
-    # All security checks passed — accept packet
-    last_sequence_id = seq
+    last_sequence_id = sequence_id
 
-    # ================================================================
-    # STEP 9 — EXTRACT SENSOR VALUES
-    # ================================================================
-    temp_valid  = data.get("temperature_valid", False)
-    hum_valid   = data.get("humidity_valid",    False)
+    temperature_valid = inner_packet.get("temperature_valid", False)
+    humidity_valid = inner_packet.get("humidity_valid", False)
 
-    temperature  = data.get("temperature") if temp_valid else None
-    raw_humidity = data.get("humidity")    if hum_valid  else None
+    temperature = inner_packet.get("temperature") if temperature_valid else None
+    raw_humidity = inner_packet.get("humidity") if humidity_valid else None
 
     if raw_humidity is not None:
-        _last_valid_humidity = raw_humidity
+        last_valid_humidity = raw_humidity
 
-    # Last-valid-temp check: flag if sensor went invalid while already out of range
-    if temperature is None and _last_valid_temp is not None:
+    if temperature is None and last_valid_temperature is not None:
         low, high = anomaly_detector.TEMP_BOUNDS.get(SENSOR_LABEL.lower(), (22, 38))
-        if _last_valid_temp < low or _last_valid_temp > high:
+
+        if last_valid_temperature < low or last_valid_temperature > high:
             reason = (
                 f"Temperature sensor went invalid while last known reading "
-                f"({_last_valid_temp}C) was out of range [{low}-{high}C]"
+                f"({last_valid_temperature}C) was out of range [{low}-{high}C]"
             )
+
             print("ALERT: TEMPERATURE OUT OF RANGE — SENSOR NOW INVALID")
             print("----------------------------------------")
-            print(f"Last Valid Temp : {_last_valid_temp} C")
+            print(f"Last Valid Temp : {last_valid_temperature} C")
             print(f"Normal Range    : {low}-{high} C")
             print("----------------------------------------")
-            upload_security_event("anomaly_detected", reason, seq)
+
+            upload_security_event("anomaly_detected", reason, sequence_id)
 
     if temperature is not None:
-        _last_valid_temp = temperature
+        last_valid_temperature = temperature
 
-    # ================================================================
-    # STEP 10 — HUMIDITY SPIKE / SUDDEN INVALID DETECTION
-    # ================================================================
-    hum_anomaly        = False
-    hum_anomaly_reason = ""
+    humidity_anomaly = False
+    humidity_anomaly_reason = ""
 
-    if hum_valid and raw_humidity is not None:
-        if _humidity_rolling:
-            avg    = sum(_humidity_rolling) / len(_humidity_rolling)
-            change = abs(float(raw_humidity) - avg)
-            if change >= HUMIDITY_SPIKE_THRESHOLD:
-                hum_anomaly        = True
-                hum_anomaly_reason = (
+    if humidity_valid and raw_humidity is not None:
+        if humidity_window_values:
+            average_humidity = sum(humidity_window_values) / len(humidity_window_values)
+            humidity_change = abs(float(raw_humidity) - average_humidity)
+
+            if humidity_change >= HUMIDITY_SPIKE_THRESHOLD:
+                humidity_anomaly = True
+                humidity_anomaly_reason = (
                     f"Humidity spike: {raw_humidity}% "
-                    f"(avg {avg:.1f}%, jumped {change:.1f}%)"
+                    f"(avg {average_humidity:.1f}%, jumped {humidity_change:.1f}%)"
                 )
-        _humidity_rolling.append(float(raw_humidity))
-        if len(_humidity_rolling) > HUMIDITY_ROLLING_WINDOW:
-            _humidity_rolling.pop(0)
-        _humidity_valid_streak += 1
-    else:
-        if _humidity_valid_streak >= HUMIDITY_INVALID_MIN_STREAK:
-            hum_anomaly        = True
-            hum_anomaly_reason = (
-                f"DHT22 humidity suddenly invalid after "
-                f"{_humidity_valid_streak} consecutive valid readings"
-            )
-        _humidity_valid_streak = 0
 
-    if hum_anomaly:
+        humidity_window_values.append(float(raw_humidity))
+
+        if len(humidity_window_values) > HUMIDITY_ROLLING_WINDOW:
+            humidity_window_values.pop(0)
+
+        humidity_valid_streak += 1
+
+    else:
+        if humidity_valid_streak >= HUMIDITY_INVALID_MIN_STREAK:
+            humidity_anomaly = True
+            humidity_anomaly_reason = (
+                f"DHT22 humidity suddenly invalid after "
+                f"{humidity_valid_streak} consecutive valid readings"
+            )
+
+        humidity_valid_streak = 0
+
+    if humidity_anomaly:
         print("ALERT: HUMIDITY ANOMALY DETECTED")
         print("----------------------------------------")
-        print(f"Sequence ID : {seq}")
-        print(f"Reason      : {hum_anomaly_reason}")
+        print(f"Sequence ID : {sequence_id}")
+        print(f"Reason      : {humidity_anomaly_reason}")
         print("----------------------------------------")
-        upload_security_event("humidity_anomaly", hum_anomaly_reason, seq)
 
-    temp_status   = data.get("temperature_status", "unknown")
-    hum_status    = data.get("humidity_status",    "unknown")
-    packet_status = data.get("packet_status", data.get("status", "unknown"))
-    timestamp     = now()
+        upload_security_event("humidity_anomaly", humidity_anomaly_reason, sequence_id)
 
-    # ================================================================
-    # STEP 11 — ML ANOMALY DETECTION
-    # ================================================================
-    BOUNDS      = {"indoor": (22, 35), "outdoor": (22, 38)}
-    _low, _high = BOUNDS.get(SENSOR_LABEL.strip().lower(), (22, 38))
-    _temp_oob   = temperature is not None and (
-        float(temperature) < _low or float(temperature) > _high
+    temperature_status = inner_packet.get("temperature_status", "unknown")
+    humidity_status = inner_packet.get("humidity_status", "unknown")
+    packet_status = inner_packet.get("packet_status", inner_packet.get("status", "unknown"))
+    timestamp = now()
+
+    temperature_bounds = {"indoor": (22, 35), "outdoor": (22, 38)}
+    low_limit, high_limit = temperature_bounds.get(SENSOR_LABEL.strip().lower(), (22, 38))
+
+    temperature_out_of_bounds = temperature is not None and (
+        float(temperature) < low_limit or float(temperature) > high_limit
     )
 
     anomaly_result = None
@@ -717,102 +689,95 @@ def on_message(client, userdata, msg):
     if temperature is not None:
         try:
             anomaly_result = anomaly_detector.predict(
-                temperature  = temperature,
-                humidity     = raw_humidity,
-                sensor_label = SENSOR_LABEL
+                temperature=temperature,
+                humidity=raw_humidity,
+                sensor_label=SENSOR_LABEL
             )
-        except Exception as e:
-            print(f"[AnomalyDetector] Prediction failed: {e}")
+
+        except Exception as error:
+            print(f"[AnomalyDetector] Prediction failed: {error}")
             anomaly_result = None
 
-    # Hard bounds fallback — fires even if ML failed
     if anomaly_result is None and temperature is not None:
         anomaly_result = {
-            "anomaly_detected": 1 if _temp_oob else 0,
-            "anomaly_proba":    1.0 if _temp_oob else 0.0,
-            "out_of_range":     _temp_oob,
-            "humidity_used":    raw_humidity,
-            "humidity_source":  "live" if raw_humidity else "unavailable",
+            "anomaly_detected": 1 if temperature_out_of_bounds else 0,
+            "anomaly_proba": 1.0 if temperature_out_of_bounds else 0.0,
+            "out_of_range": temperature_out_of_bounds,
+            "humidity_used": raw_humidity,
+            "humidity_source": "live" if raw_humidity else "unavailable",
         }
 
-    # Hard bounds always win over ML prediction
-    if anomaly_result is not None and _temp_oob:
+    if anomaly_result is not None and temperature_out_of_bounds:
         anomaly_result["anomaly_detected"] = 1
-        anomaly_result["out_of_range"]     = True
+        anomaly_result["out_of_range"] = True
 
     if anomaly_result and anomaly_result.get("anomaly_detected") == 1:
         upload_security_event(
-            event_type = "anomaly_detected",
-            message    = (
+            event_type="anomaly_detected",
+            message=(
                 f"Anomaly on {SENSOR_LABEL}. "
-                f"Temp: {temperature}C (range {_low}-{_high}C)  "
+                f"Temp: {temperature}C (range {low_limit}-{high_limit}C)  "
                 f"Humidity: {anomaly_result.get('humidity_used')}%  "
                 f"Confidence: {anomaly_result.get('anomaly_proba', 0) * 100:.1f}%  "
                 f"OutOfRange: {anomaly_result.get('out_of_range')}"
             ),
-            seq = seq
+            seq=sequence_id
         )
 
-    # ================================================================
-    # STEP 12 — BUILD + UPLOAD FIREBASE RECORD
-    # ================================================================
     display_humidity, humidity_source = resolve_display_humidity(raw_humidity, anomaly_result)
 
-    record = {
-        "deviceId":           DEVICE_ID,
-        "sequence_id":        seq,
-        "temperature":        temperature,
-        "humidity":           display_humidity,
-        "humidity_source":    humidity_source,
-        "temperature_status": temp_status,
-        "humidity_status":    hum_status,
-        "packet_status":      packet_status,
-        "timestamp":          timestamp,
-        "sensor_label":       SENSOR_LABEL,
-        "anomaly_detected":   anomaly_result.get("anomaly_detected") if anomaly_result else None,
-        "anomaly_proba":      anomaly_result.get("anomaly_proba")     if anomaly_result else None,
-        "out_of_range":       anomaly_result.get("out_of_range")      if anomaly_result else None,
+    firebase_record = {
+        "deviceId": DEVICE_ID,
+        "sequence_id": sequence_id,
+        "temperature": temperature,
+        "humidity": display_humidity,
+        "humidity_source": humidity_source,
+        "temperature_status": temperature_status,
+        "humidity_status": humidity_status,
+        "packet_status": packet_status,
+        "timestamp": timestamp,
+        "sensor_label": SENSOR_LABEL,
+        "anomaly_detected": anomaly_result.get("anomaly_detected") if anomaly_result else None,
+        "anomaly_proba": anomaly_result.get("anomaly_proba") if anomaly_result else None,
+        "out_of_range": anomaly_result.get("out_of_range") if anomaly_result else None,
     }
 
-    upload_success = upload_sensor_data(record)
+    upload_success = upload_sensor_data(firebase_record)
 
     upload_system_log("info", "Sensor packet accepted", {
-        "sequenceId":      seq,
-        "temperature":     temperature,
-        "humidity":        display_humidity,
-        "humiditySource":  humidity_source,
-        "packetStatus":    packet_status,
+        "sequenceId": sequence_id,
+        "temperature": temperature,
+        "humidity": display_humidity,
+        "humiditySource": humidity_source,
+        "packetStatus": packet_status,
         "anomalyDetected": anomaly_result.get("anomaly_detected") if anomaly_result else None,
-        "firebaseUpload":  upload_success,
+        "firebaseUpload": upload_success,
     })
 
     print_sensor_output(
-        seq, temperature, raw_humidity, display_humidity,
-        humidity_source, temp_status, hum_status,
-        packet_status, timestamp, upload_success, anomaly_result
+        sequence_id,
+        temperature,
+        raw_humidity,
+        display_humidity,
+        humidity_source,
+        temperature_status,
+        humidity_status,
+        packet_status,
+        timestamp,
+        upload_success,
+        anomaly_result
     )
 
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-client.on_connect = on_connect
-client.on_message = on_message
+mqtt_receiver = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
+mqtt_receiver.on_connect = on_connect
+mqtt_receiver.on_message = on_message
 
-# =========================
-# TLS CONFIG
-# =========================
-client.tls_set(
-    ca_certs  = CA_CERT,
-    certfile  = None,
-    keyfile   = None,
-    cert_reqs = ssl.CERT_REQUIRED
-)
+mqtt_receiver.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 
-# If TLS certificate error occurs during testing, comment the block above
-# and use these two lines temporarily:
-# client.tls_set(cert_reqs=ssl.CERT_NONE)
-# client.tls_insecure_set(True)
+mqtt_receiver.tls_set(cert_reqs=ssl.CERT_NONE)
+mqtt_receiver.tls_insecure_set(True)
 
-
-client.connect(BROKER_HOST, BROKER_PORT, 60)
-client.loop_forever()
+mqtt_receiver.connect(BROKER_HOST, BROKER_PORT, 60)
+mqtt_receiver.loop_forever()
